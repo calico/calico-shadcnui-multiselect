@@ -6,6 +6,7 @@ import {
 	ChevronDown,
 	XIcon,
 	WandSparkles,
+	Plus,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -26,6 +27,12 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@/components/ui/command";
+
+// calico imports
+
+const MOBILE_MAX_COUNT = 20;
+const TABLET_MAX_COUNT = 40;
+const DESKTOP_MAX_COUNT = 60;
 
 /**
  * Animation types and configurations
@@ -114,6 +121,9 @@ interface MultiSelectProps
 			"animationConfig"
 		>,
 		VariantProps<typeof multiSelectVariants> {
+	/** Optional, function to add arbitrary input to the options */
+	onOptionAdd?: (value: string) => void;
+
 	/**
 	 * An array of option objects or groups to be displayed in the multi-select component.
 	 */
@@ -126,6 +136,9 @@ interface MultiSelectProps
 
 	/** The default selected values when the component mounts. */
 	defaultValue?: string[];
+
+	//** Optional, function to call when popover closes */
+	onClose?: () => void;
 
 	/**
 	 * Placeholder text to be displayed when no values are selected.
@@ -157,12 +170,6 @@ interface MultiSelectProps
 	 * Optional, defaults to false.
 	 */
 	modalPopover?: boolean;
-
-	/**
-	 * If true, renders the multi-select component as a child of another component.
-	 * Optional, defaults to false.
-	 */
-	asChild?: boolean;
 
 	/**
 	 * Additional class names to apply custom styles to the multi-select component.
@@ -307,16 +314,17 @@ export interface MultiSelectRef {
 export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 	(
 		{
+			onOptionAdd,
 			options,
 			onValueChange,
 			variant,
 			defaultValue = [],
+			onClose,
 			placeholder = "Select options",
 			animation = 0,
 			animationConfig,
 			maxCount = 3,
 			modalPopover = false,
-			asChild = false,
 			className,
 			hideSelectAll = false,
 			searchable = true,
@@ -462,9 +470,21 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 			}
 			if (responsive === true) {
 				const defaultResponsive = {
-					mobile: { maxCount: 2, hideIcons: false, compactMode: true },
-					tablet: { maxCount: 4, hideIcons: false, compactMode: false },
-					desktop: { maxCount: 6, hideIcons: false, compactMode: false },
+					mobile: {
+						maxCount: MOBILE_MAX_COUNT,
+						hideIcons: false,
+						compactMode: true,
+					},
+					tablet: {
+						maxCount: TABLET_MAX_COUNT,
+						hideIcons: false,
+						compactMode: false,
+					},
+					desktop: {
+						maxCount: DESKTOP_MAX_COUNT,
+						hideIcons: false,
+						compactMode: false,
+					},
 				};
 				const currentSettings = defaultResponsive[screenSize];
 				return {
@@ -604,11 +624,62 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 			);
 		}, [options, searchValue, searchable, isGroupedOptions]);
 
+		const addInputAsOption = () => {
+			if (onOptionAdd && searchValue) {
+				let foundOption: MultiSelectOption | undefined;
+				// `options` is either MultiSelectGroup[] or MultiSelectOption[]
+				if (isGroupedOptions(options)) {
+					const foundGroup = options.find((group) =>
+						group.options.find(
+							(option) =>
+								option.label.toLowerCase() === searchValue.toLowerCase() ||
+								option.value.toLowerCase() === searchValue.toLowerCase()
+						)
+					);
+					if (foundGroup) {
+						foundOption = foundGroup.options.find(
+							(option) =>
+								option.value.toLowerCase() === searchValue.toLowerCase() ||
+								option.label.toLowerCase() === searchValue.toLowerCase()
+						);
+					}
+				} else {
+					foundOption = options.find(
+						(option) =>
+							option.value.toLowerCase() === searchValue.toLowerCase() ||
+							option.label.toLowerCase() === searchValue.toLowerCase()
+					);
+				}
+
+				if (foundOption) {
+					const foundSelectedValue = selectedValues.find(
+						(selectedValue) =>
+							selectedValue.toLowerCase() === foundOption.value.toLowerCase()
+					);
+					if (!foundSelectedValue) {
+						const newSelectedValues = [...selectedValues, foundOption.value];
+						setSelectedValues(newSelectedValues);
+						onValueChange(newSelectedValues);
+					}
+
+					return;
+				}
+
+				onOptionAdd(searchValue);
+				const newSelectedValues = [...selectedValues, searchValue];
+				setSelectedValues(newSelectedValues);
+				onValueChange(newSelectedValues);
+			}
+		};
+
 		const handleInputKeyDown = (
 			event: React.KeyboardEvent<HTMLInputElement>
 		) => {
 			if (event.key === "Enter") {
-				setIsPopoverOpen(true);
+				if (!isPopoverOpen) {
+					setIsPopoverOpen(true);
+				}
+				addInputAsOption();
 			} else if (event.key === "Backspace" && !event.currentTarget.value) {
 				const newSelectedValues = [...selectedValues];
 				newSelectedValues.pop();
@@ -736,6 +807,7 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 					);
 				} else {
 					announce("Dropdown closed.");
+					onClose && onClose();
 				}
 				prevIsOpen.current = isPopoverOpen;
 			}
@@ -759,7 +831,14 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 				}
 				prevSearchValue.current = searchValue;
 			}
-		}, [selectedValues, isPopoverOpen, searchValue, announce, getAllOptions]);
+		}, [
+			selectedValues,
+			isPopoverOpen,
+			searchValue,
+			getAllOptions,
+			announce,
+			onClose,
+		]);
 
 		return (
 			<>
@@ -1021,14 +1100,37 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 						onEscapeKeyDown={() => setIsPopoverOpen(false)}>
 						<Command>
 							{searchable && (
-								<CommandInput
-									placeholder="Search options..."
-									onKeyDown={handleInputKeyDown}
-									value={searchValue}
-									onValueChange={setSearchValue}
-									aria-label="Search through available options"
-									aria-describedby={`${multiSelectId}-search-help`}
-								/>
+								<>
+									<CommandInput
+										placeholder={
+											onOptionAdd
+												? "Search or add options..."
+												: "Search options..."
+										}
+										onKeyDown={handleInputKeyDown}
+										value={searchValue}
+										onValueChange={setSearchValue}
+										aria-label={
+											onOptionAdd
+												? "Search through or add to available options"
+												: "Search through available options"
+										}
+										aria-describedby={`${multiSelectId}-search-help`}
+									/>
+									{onOptionAdd && (
+										<Button
+											tabIndex={0}
+											variant="ghost"
+											onClick={(event) => {
+												event.stopPropagation();
+												addInputAsOption();
+											}}
+											aria-label="Add option"
+											className="text-muted-foreground hover:text-foreground focus:ring-ring absolute top-0 right-3 h-9 w-9 cursor-pointer items-center justify-center rounded-sm focus:ring-2 focus:ring-offset-1 focus:outline-none">
+											<Plus className="h-9 w-9" />
+										</Button>
+									)}
+								</>
 							)}
 							{searchable && (
 								<div id={`${multiSelectId}-search-help`} className="sr-only">
