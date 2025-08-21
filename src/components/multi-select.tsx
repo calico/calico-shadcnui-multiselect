@@ -6,6 +6,7 @@ import {
 	ChevronDown,
 	XIcon,
 	WandSparkles,
+	Plus,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -26,6 +27,13 @@ import {
 	CommandList,
 	CommandSeparator,
 } from "@/components/ui/command";
+
+// calico imports
+import { useControllableState } from "@/hooks/use-controllable-state";
+
+const MOBILE_MAX_COUNT = 20;
+const TABLET_MAX_COUNT = 40;
+const DESKTOP_MAX_COUNT = 60;
 
 /**
  * Animation types and configurations
@@ -118,6 +126,16 @@ interface MultiSelectProps
 	 * An array of option objects or groups to be displayed in the multi-select component.
 	 */
 	options: MultiSelectOption[] | MultiSelectGroup[];
+
+	/** Optional, function to add arbitrary input to the options */
+	onOptionAdd?: (value: string) => void;
+
+	/** Optional, controlled selected values for the multi-select component */
+	values?: string[];
+
+	/** Optional, sets the selected values for the multi-select component. */
+	setValues?: React.Dispatch<React.SetStateAction<string[]>>;
+
 	/**
 	 * Callback function triggered when the selected values change.
 	 * Receives an array of the new selected values.
@@ -126,6 +144,18 @@ interface MultiSelectProps
 
 	/** The default selected values when the component mounts. */
 	defaultValue?: string[];
+
+	/**
+	 * Controls the open state of the multi-select popover.
+	 * Optional, defaults to being handled internally.
+	 */
+	open?: boolean;
+
+	/**
+	 * Sets the open state if provided
+	 * Optional, defaults to being handled internally.
+	 */
+	onOpenChange?: React.Dispatch<React.SetStateAction<boolean>>;
 
 	/**
 	 * Placeholder text to be displayed when no values are selected.
@@ -157,12 +187,6 @@ interface MultiSelectProps
 	 * Optional, defaults to false.
 	 */
 	modalPopover?: boolean;
-
-	/**
-	 * If true, renders the multi-select component as a child of another component.
-	 * Optional, defaults to false.
-	 */
-	asChild?: boolean;
 
 	/**
 	 * Additional class names to apply custom styles to the multi-select component.
@@ -308,15 +332,19 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 	(
 		{
 			options,
+			onOptionAdd,
+			values,
+			setValues,
 			onValueChange,
 			variant,
 			defaultValue = [],
+			open,
+			onOpenChange,
 			placeholder = "Select options",
 			animation = 0,
 			animationConfig,
 			maxCount = 3,
 			modalPopover = false,
-			asChild = false,
 			className,
 			hideSelectAll = false,
 			searchable = true,
@@ -335,9 +363,16 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 		},
 		ref
 	) => {
-		const [selectedValues, setSelectedValues] =
-			React.useState<string[]>(defaultValue);
-		const [isPopoverOpen, setIsPopoverOpen] = React.useState(false);
+		const [selectedValues, setSelectedValues] = useControllableState<string[]>({
+			value: values,
+			defaultValue,
+			onChange: setValues,
+		});
+		const [isPopoverOpen, setIsPopoverOpen] = useControllableState<boolean>({
+			value: open,
+			defaultValue: false,
+			onChange: onOpenChange,
+		});
 		const [isAnimating, setIsAnimating] = React.useState(false);
 		const [searchValue, setSearchValue] = React.useState("");
 
@@ -391,7 +426,7 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 			setIsPopoverOpen(false);
 			setSearchValue("");
 			onValueChange(defaultValue);
-		}, [defaultValue, onValueChange]);
+		}, [setSelectedValues, defaultValue, setIsPopoverOpen, onValueChange]);
 
 		const buttonRef = React.useRef<HTMLButtonElement>(null);
 
@@ -424,7 +459,7 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 					}
 				},
 			}),
-			[resetToDefault, selectedValues, onValueChange]
+			[resetToDefault, selectedValues, setSelectedValues, onValueChange]
 		);
 
 		const [screenSize, setScreenSize] = React.useState<
@@ -462,9 +497,21 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 			}
 			if (responsive === true) {
 				const defaultResponsive = {
-					mobile: { maxCount: 2, hideIcons: false, compactMode: true },
-					tablet: { maxCount: 4, hideIcons: false, compactMode: false },
-					desktop: { maxCount: 6, hideIcons: false, compactMode: false },
+					mobile: {
+						maxCount: MOBILE_MAX_COUNT,
+						hideIcons: false,
+						compactMode: true,
+					},
+					tablet: {
+						maxCount: TABLET_MAX_COUNT,
+						hideIcons: false,
+						compactMode: false,
+					},
+					desktop: {
+						maxCount: DESKTOP_MAX_COUNT,
+						hideIcons: false,
+						compactMode: false,
+					},
 				};
 				const currentSettings = defaultResponsive[screenSize];
 				return {
@@ -570,14 +617,14 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 		const getOptionByValue = React.useCallback(
 			(value: string): MultiSelectOption | undefined => {
 				const option = getAllOptions().find((option) => option.value === value);
-				if (!option && process.env.NODE_ENV === "development") {
+				if (!option && !onOptionAdd && process.env.NODE_ENV === "development") {
 					console.warn(
 						`MultiSelect: Option with value "${value}" not found in options list`
 					);
 				}
 				return option;
 			},
-			[getAllOptions]
+			[getAllOptions, onOptionAdd]
 		);
 
 		const filteredOptions = React.useMemo(() => {
@@ -604,16 +651,61 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 			);
 		}, [options, searchValue, searchable, isGroupedOptions]);
 
+		const addInputAsOption = () => {
+			if (onOptionAdd && searchValue) {
+				let foundOption: MultiSelectOption | undefined;
+				if (isGroupedOptions(options)) {
+					const foundGroup = options.find((group) =>
+						group.options.find(
+							(option) =>
+								option.label.toLowerCase() === searchValue.toLowerCase() ||
+								option.value.toLowerCase() === searchValue.toLowerCase()
+						)
+					);
+					if (foundGroup) {
+						foundOption = foundGroup.options.find(
+							(option) =>
+								option.value.toLowerCase() === searchValue.toLowerCase() ||
+								option.label.toLowerCase() === searchValue.toLowerCase()
+						);
+					}
+				} else {
+					foundOption = options.find(
+						(option) =>
+							option.value.toLowerCase() === searchValue.toLowerCase() ||
+							option.label.toLowerCase() === searchValue.toLowerCase()
+					);
+				}
+
+				if (foundOption) {
+					const foundSelectedValue = selectedValues.find(
+						(selectedValue) =>
+							selectedValue.toLowerCase() === foundOption.value.toLowerCase()
+					);
+					if (!foundSelectedValue) {
+						const newSelectedValues = [...selectedValues, foundOption.value];
+						setSelectedValues(newSelectedValues);
+						onValueChange(newSelectedValues);
+					}
+
+					return;
+				}
+
+				onOptionAdd(searchValue);
+				const newSelectedValues = [...selectedValues, searchValue];
+				setSelectedValues(newSelectedValues);
+				onValueChange(newSelectedValues);
+			}
+		};
+
 		const handleInputKeyDown = (
 			event: React.KeyboardEvent<HTMLInputElement>
 		) => {
 			if (event.key === "Enter") {
-				setIsPopoverOpen(true);
-			} else if (event.key === "Backspace" && !event.currentTarget.value) {
-				const newSelectedValues = [...selectedValues];
-				newSelectedValues.pop();
-				setSelectedValues(newSelectedValues);
-				onValueChange(newSelectedValues);
+				if (!isPopoverOpen) {
+					setIsPopoverOpen(true);
+				}
+				addInputAsOption();
 			}
 		};
 
@@ -677,7 +769,13 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 				}
 				prevDefaultValueRef.current = [...defaultValue];
 			}
-		}, [defaultValue, selectedValues, arraysEqual, resetOnDefaultValueChange]);
+		}, [
+			defaultValue,
+			selectedValues,
+			arraysEqual,
+			resetOnDefaultValueChange,
+			setSelectedValues,
+		]);
 
 		const getWidthConstraints = () => {
 			const defaultMinWidth = screenSize === "mobile" ? "0px" : "200px";
@@ -759,7 +857,7 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 				}
 				prevSearchValue.current = searchValue;
 			}
-		}, [selectedValues, isPopoverOpen, searchValue, announce, getAllOptions]);
+		}, [selectedValues, isPopoverOpen, searchValue, getAllOptions, announce]);
 
 		return (
 			<>
@@ -1019,14 +1117,22 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 						}}
 						align="start"
 						onEscapeKeyDown={() => setIsPopoverOpen(false)}>
-						<Command>
+						<Command shouldFilter={false}>
 							{searchable && (
 								<CommandInput
-									placeholder="Search options..."
+									placeholder={
+										onOptionAdd
+											? "Search or add options..."
+											: "Search options..."
+									}
 									onKeyDown={handleInputKeyDown}
 									value={searchValue}
 									onValueChange={setSearchValue}
-									aria-label="Search through available options"
+									aria-label={
+										onOptionAdd
+											? "Search through or add to available options"
+											: "Search through available options"
+									}
 									aria-describedby={`${multiSelectId}-search-help`}
 								/>
 							)}
@@ -1044,6 +1150,18 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 								<CommandEmpty>
 									{emptyIndicator || "No results found."}
 								</CommandEmpty>{" "}
+								{onOptionAdd &&
+									searchValue &&
+									!getOptionByValue(searchValue) && (
+										<CommandList>
+											<CommandGroup>
+												<CommandItem>
+													<Plus className="h-9 w-9" />
+													Add "{searchValue}"
+												</CommandItem>
+											</CommandGroup>
+										</CommandList>
+									)}
 								{!hideSelectAll && !searchValue && (
 									<CommandGroup>
 										<CommandItem
@@ -1166,28 +1284,30 @@ export const MultiSelect = React.forwardRef<MultiSelectRef, MultiSelectProps>(
 									</CommandGroup>
 								)}
 								<CommandSeparator />
-								<CommandGroup>
-									<div className="flex items-center justify-between">
-										{selectedValues.length > 0 && (
-											<>
-												<CommandItem
-													onSelect={handleClear}
-													className="flex-1 justify-center cursor-pointer">
-													Clear
-												</CommandItem>
-												<Separator
-													orientation="vertical"
-													className="flex min-h-6 h-full"
-												/>
-											</>
-										)}
-										<CommandItem
-											onSelect={() => setIsPopoverOpen(false)}
-											className="flex-1 justify-center cursor-pointer max-w-full">
-											Close
-										</CommandItem>
-									</div>
-								</CommandGroup>
+								{filteredOptions.length > 0 && (
+									<CommandGroup>
+										<div className="flex items-center justify-between">
+											{selectedValues.length > 0 && (
+												<>
+													<CommandItem
+														onSelect={handleClear}
+														className="flex-1 justify-center cursor-pointer">
+														Clear
+													</CommandItem>
+													<Separator
+														orientation="vertical"
+														className="flex min-h-6 h-full"
+													/>
+												</>
+											)}
+											<CommandItem
+												onSelect={() => setIsPopoverOpen(false)}
+												className="flex-1 justify-center cursor-pointer max-w-full">
+												Close
+											</CommandItem>
+										</div>
+									</CommandGroup>
+								)}
 							</CommandList>
 						</Command>
 					</PopoverContent>
